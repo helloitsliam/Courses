@@ -2,10 +2,10 @@
 ## Variables ##
 ###############
 
-$logoPath = "C:\Forensics\Assets\Methodize-Logo-Small.png"
+$logoPath = "C:\PROJECTS\PowerShell-Live-Response-Forensics\Assets\Methodize-Logo-Small.png"
 $reportName = "Methodize-Report.html"
-$reportLocation = "C:\Forensics\Report\"
-$sysinternalsPath = "C:\Forensics\Assets\Sysinternals"
+$reportLocation = "C:\PROJECTS\PowerShell-Live-Response-Forensics\Report\"
+$sysinternalsPath = "C:\PROJECTS\PowerShell-Live-Response-Forensics\Assets\Sysinternals"
 
 
 ###########################
@@ -30,7 +30,7 @@ function New-HtmlDocument {
     }
   
     # Create the HTML document
-    $html = "<html><head><title>Helloitsliam Triage</title><style>$Css</style></head><body>"
+    $html = "<html><head><title>Methodize: Rapid Digital Assessment ($(Get-Date))</title><style>$Css</style></head><body>"
 
     if ($LogoPath) {
         $html += "<div class='header'><img src='$LogoPath'></div>"
@@ -75,12 +75,36 @@ function New-HtmlDocument {
     $html | Out-File -FilePath $FilePath -Encoding utf8
 }
 
+function Invoke-CommandCheck {
+    param(
+        [string]$Command
+    )
+
+    [bool]$commandExists = $false
+
+    if (Get-Command $Command -ErrorAction SilentlyContinue) {
+        $commandExists = $true
+    }
+    else {
+        $commandExists = $false
+    }
+
+    return $commandExists
+}
+
+
 function Get-SystemInfo {
     $os = Get-CimInstance -ClassName Win32_OperatingSystem
     $bios = Get-CimInstance -ClassName Win32_BIOS
     $processor = Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1
     $computer = Get-CimInstance -ClassName Win32_ComputerSystem
-    $timeZone = Get-TimeZone
+
+    if (Invoke-CommandCheck -Command "Get-TimeZone") {
+        $timeZone = (Get-TimeZone).DisplayName
+    }
+    else {
+        $timeZone = tzutil /g
+    }
 
     $systemInfo = @{
         'OS Name'                   = $os.Caption
@@ -102,7 +126,7 @@ function Get-SystemInfo {
         'BIOS Release Date'         = $bios.ReleaseDate
         'System Locale'             = $os.MUILanguages[0]
         'Input Locale'              = $os.MUILanguages[0]
-        'Time Zone'                 = $timeZone.DisplayName
+        'Time Zone'                 = $timeZone
         'Total Physical Memory'     = "{0:N2}" -f ($computer.TotalPhysicalMemory / 1GB) + ' GB'
         'Available Physical Memory' = "{0:N2}" -f ($os.FreePhysicalMemory / 1MB) + ' MB'
         'Virtual Memory: Max Size'  = "{0:N2}" -f ($os.TotalVirtualMemorySize / 1GB) + ' GB'
@@ -313,17 +337,37 @@ a:hover {
 
 Set-Location $sysinternalsPath
 
+
 $ComputerName = "<h2>Computer name: $env:computername</h2>"
 $ComputerInfo = Get-SystemInfo
-$LocalUserInfo = Get-LocalUser | Select-Object -Property Name, Description, Enabled | ConvertTo-HTML -Fragment
-$LocalGroupInfo = Get-LocalGroup | ForEach-Object {
-    $members = Get-LocalGroupMember -Group "$($_.Name)" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
 
-    New-Object -TypeName PSObject -Property @{
-        Name    = $_.Name
-        Members = $members -join ','
+$exists = Invoke-CommandCheck -Command "Get-LocalUser"
+if ($exists) {
+    $LocalUserInfo = Get-LocalUser | Select-Object -Property Name, Description, Enabled | ConvertTo-HTML -Fragment
+    $LocalGroupInfo = Get-LocalGroup | ForEach-Object {
+        $members = Get-LocalGroupMember -Group "$($_.Name)" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+
+        New-Object -TypeName PSObject -Property @{
+            Name    = $_.Name
+            Members = $members -join ','
+        }
+    } | ConvertTo-HTML -Property Name, Members -Fragment
+}
+else {
+    $LocalUsers = Get-CimInstance -ClassName win32_useraccount -Filter "LocalAccount='True'"
+    $LocalUserInfo = $LocalUsers | Select-Object -ExpandProperty Name
+    
+    $groupsList = net localgroup
+    $LocalGroupInfo = $groupsList | ForEach-Object {
+        $group = $_.Replace("*", "")
+        $members = net localgroup $group | Select-String "^[^ ].*$" | Select-String -NotMatch "^(Alias name|Comment|Members|The command completed successfully.)" | Select-Object -Skip 1
+        
+        New-Object -TypeName PSObject -Property @{
+            Name    = $group
+            Members = $members
+        }
     }
-} | ConvertTo-HTML -Property Name, Members -Fragment
+}
 
 $MemoryInfo = Get-CimInstance -ClassName Win32_OperatingSystem | Select-Object FreePhysicalMemory, TotalVisibleMemorySize | ConvertTo-Html -Fragment
 $OSinfo = Get-CimInstance -Class Win32_OperatingSystem | ConvertTo-Html -As List -Property Version, Caption, BuildNumber, Manufacturer -Fragment
@@ -354,7 +398,7 @@ $ProcessConnectionsInfo = Get-NetTCPConnection | ConvertTo-Html -Property Owning
 $StartupProcessesInfo = Get-CimInstance -ClassName Win32_StartupCommand | Select-Object -First 10 | ConvertTo-Html -Property Caption, Command, Location, User -Fragment
 $ScheduledTasksInfo = Get-CimInstance -ClassName Win32_ScheduledJob | Select-Object -First 10 | ConvertTo-Html -Property Caption, Command, ScheduledStartTime, StartTime, Status -Fragment
 
-$AutoRunInformation = .\autorunsc.exe -a * -m -c /accepteula | Select-Object -Skip 5 | ConvertFrom-Csv | Where-Object {$_.Entry -ne ""} | Select-Object "Entry", "Description","Image Path","Enabled" | ConvertTo-Html -Fragment
+$AutoRunInformation = .\autorunsc.exe -a * -m -c /accepteula | Select-Object -Skip 5 | ConvertFrom-Csv | Where-Object { $_.Entry -ne "" } | Select-Object "Entry", "Description", "Image Path", "Enabled" | ConvertTo-Html -Fragment
 
 $USBDevicesInfo = Get-CimInstance -ClassName Win32_USBHub | Select-Object -First 10 | ConvertTo-Html -Property Caption, Description, DeviceID, Manufacturer, Name, SerialNumber -Fragment
 $ModifiedFilesInfo = Get-ChildItem -Path C:\ -Recurse | Where-Object { $_.LastWriteTime -ge (Get-Date).AddDays(-7) } | Select-Object -First 10 | ConvertTo-Html -Property FullName, LastWriteTime, Length -Fragment
@@ -367,17 +411,18 @@ $SharedFoldersInfo = Get-WmiObject -Class Win32_Share | ConvertTo-Html -Property
 $DiskEncryptionInfo = Get-BitLockerVolume | Select-Object -Property MountPoint, EncryptionMethod, @{ Name = 'KeyProtector'; Expression = { $_.KeyProtector.KeyProtectorType } } | ConvertTo-Html -Property MountPoint, EncryptionMethod, KeyProtector -Fragment
 $ShadowCopyInfo = Get-CimInstance -ClassName Win32_ShadowCopy | Select-Object ID, VolumeName, DeviceObject, InstallDate | ConvertTo-Html -Property ID, VolumeName, DeviceObject, InstallDate -Fragment
 $GroupPolicyInfo = gpresult.exe /r | Out-String
+$AuditPolicyInfo = auditpol /get /category:* | Out-String
 $InstalledApplicationInfo = Get-CimInstance win32_product | Select-Object Name, Version, Vendor, InstallDate, InstallSource, PackageName, Localpackage | ConvertTo-Html -Fragment
 
-$LocalLogonInfo = .\psloggedon64.exe -accepteula | Out-String
-$LogonSessionInfo = .\logonsessions64.exe -c -accepteula | Select-Object -Skip 5 | ConvertFrom-Csv | ConvertTo-Html -Fragment
+$LocalLogonInfo = .\psloggedon64.exe -accepteula -nobanner | Out-String
+$LogonSessionInfo = .\logonsessions64.exe -c -accepteula -nobanner | ConvertFrom-Csv | ConvertTo-Html -Fragment
 $OpenFilesByprocessInfo = .\handle.exe -v -accepteula | Select-Object -Skip 5 | ConvertFrom-Csv | ConvertTo-Html -Fragment
 $OpenedExplorerWindowInfo = Get-Process | Where-Object { $_.mainWindowTitle } | Select-Object Id, Name, mainWindowtitle | ConvertTo-Html -Fragment
 
-$EventLogs = wmic nteventlog list brief /format:csv | Where-Object {$_ -ne ''}
-$EventLogsInfo = $EventLogs| ConvertFrom-Csv | Select-Object LogFileName, Name, NumberOfRecords, FileSize | ConvertTo-Html -Fragment
+$EventLogs = wmic nteventlog list brief /format:csv | Where-Object { $_ -ne '' }
+$EventLogsInfo = $EventLogs | ConvertFrom-Csv | Select-Object LogFileName, Name, NumberOfRecords, FileSize | ConvertTo-Html -Fragment
 
-$WindowsDefenderQuarantineInfo = Get-WinEvent -FilterHashtable @{ LogName='Microsoft-Windows-Windows Defender/Operational'; Data='Severe'} | ConvertTo-Html -Fragment -Property TimeCreated, Message
+$WindowsDefenderQuarantineInfo = Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; } | ConvertTo-Html -Fragment -Property TimeCreated, Message
 
 $ApplicationEvents = Get-WinEvent -FilterHashtable @{ Logname = 'Application'; } -MaxEvents 25 | Sort-Object TimeCreated -Descending
 $ApplicationEvents = $ApplicationEvents | ConvertTo-Html -Fragment -Property ID, Message, LevelDisplayName, TimeCreated
@@ -429,7 +474,7 @@ $contentSets = @(
     @{ Title = "Shared Folder Information"; Content = $SharedFoldersInfo }
     @{ Title = "Shadow Copy Information"; Content = $ShadowCopyInfo }
     @{ Title = "Group Policy Information"; Content = "<pre>$GroupPolicyInfo</pre>" }
-    @( Title)
+    @{ Title = "Audit Policy Information"; Content = "<pre>$AuditPolicyInfo</pre>" }
     @{ Title = "Current Opened Explorer Windows"; Content = $OpenedExplorerWindowInfo }
     @{ Title = "Event Logs Information"; Content = "<pre>$EventLogsInfo</pre>" }
     @{ Title = "Windows Defender Quarantine Information"; Content = $WindowsDefenderQuarantineInfo }
