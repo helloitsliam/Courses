@@ -377,6 +377,8 @@ $OpenedExplorerWindowInfo = Get-Process | Where-Object { $_.mainWindowTitle } | 
 $EventLogs = wmic nteventlog list brief /format:csv | Where-Object {$_ -ne ''}
 $EventLogsInfo = $EventLogs| ConvertFrom-Csv | Select-Object LogFileName, Name, NumberOfRecords, FileSize | ConvertTo-Html -Fragment
 
+$WindowsDefenderQuarantineInfo = Get-WinEvent -FilterHashtable @{ LogName='Microsoft-Windows-Windows Defender/Operational'; Data='Severe'} | ConvertTo-Html -Fragment -Property TimeCreated, Message
+
 $ApplicationEvents = Get-WinEvent -FilterHashtable @{ Logname = 'Application'; } -MaxEvents 25 | Sort-Object TimeCreated -Descending
 $ApplicationEvents = $ApplicationEvents | ConvertTo-Html -Fragment -Property ID, Message, LevelDisplayName, TimeCreated
 
@@ -427,8 +429,10 @@ $contentSets = @(
     @{ Title = "Shared Folder Information"; Content = $SharedFoldersInfo }
     @{ Title = "Shadow Copy Information"; Content = $ShadowCopyInfo }
     @{ Title = "Group Policy Information"; Content = "<pre>$GroupPolicyInfo</pre>" }
+    @( Title)
     @{ Title = "Current Opened Explorer Windows"; Content = $OpenedExplorerWindowInfo }
     @{ Title = "Event Logs Information"; Content = "<pre>$EventLogsInfo</pre>" }
+    @{ Title = "Windows Defender Quarantine Information"; Content = $WindowsDefenderQuarantineInfo }
     @{ Title = "Application Event Log Entries"; Content = "<pre>$ApplicationEvents</pre>" }
     @{ Title = "Security Event Log Entries"; Content = "<pre>$SecurityEvents</pre>" }
     @{ Title = "System Event Log Entries"; Content = "<pre>$SystemEvents</pre>" }
